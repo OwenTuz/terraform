@@ -608,6 +608,7 @@ func (c *InitCommand) getProviders(config *configs.Config, state *states.State, 
 			))
 		},
 		FetchPackageFailure: func(provider addrs.Provider, version getproviders.Version, err error) {
+			const summaryIncompatible = "Incompatible provider version"
 			switch err := err.(type) {
 			case getproviders.ErrProtocolNotSupported:
 				closestAvailable := err.Suggestion
@@ -615,13 +616,13 @@ func (c *InitCommand) getProviders(config *configs.Config, state *states.State, 
 				case closestAvailable == getproviders.UnspecifiedVersion:
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Error,
-						"Incompatible provider version",
+						summaryIncompatible,
 						fmt.Sprintf(errProviderVersionIncompatible, provider.String()),
 					))
 				case version.GreaterThan(closestAvailable):
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Error,
-						"Incompatible provider version",
+						summaryIncompatible,
 						fmt.Sprintf(providerProtocolTooNew, provider.ForDisplay(),
 							version, tfversion.String(), closestAvailable, closestAvailable,
 							getproviders.VersionConstraintsString(reqs[provider]),
@@ -630,10 +631,35 @@ func (c *InitCommand) getProviders(config *configs.Config, state *states.State, 
 				default: // version is less than closestAvailable
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Error,
-						"Incompatible provider version",
+						summaryIncompatible,
 						fmt.Sprintf(providerProtocolTooOld, provider.ForDisplay(),
 							version, tfversion.String(), closestAvailable, closestAvailable,
 							getproviders.VersionConstraintsString(reqs[provider]),
+						),
+					))
+				}
+			case getproviders.ErrPlatformNotSupported:
+				switch {
+				case err.MirrorURL != nil:
+					// If we're installing from a mirror then it may just be
+					// the mirror lacking the package, rather than it being
+					// unavailable from upstream.
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(
+							"Your chosen provider mirror at %s does not have a %s v%s plugin available for your current platform, %s.\n\nProvider releases are separate from Terraform CLI releases, so this provider might not support your current platform. Alternatively, the mirror itself might have only a subset of the plugin packages available in the origin registry, at %s.",
+							err.MirrorURL, err.Provider, err.Version, err.Platform,
+							err.Provider.Hostname,
+						),
+					))
+				default:
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(
+							"Provider %s v%s does not have a plugin available for your current platform, %s.\n\nProvider releases are separate from Terraform CLI releases, so not all providers are available for all platforms. Other versions of this provider may have different platforms supported.",
+							err.Provider, err.Version, err.Platform,
 						),
 					))
 				}
